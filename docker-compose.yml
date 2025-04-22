@@ -1,0 +1,125 @@
+services:
+  n8n:
+    build:
+      context: ./n8n
+    container_name: n8n_app
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=admin
+      - DB_TYPE=mysqldb
+      - DB_MYSQLDB_HOST=n8n_mysql
+      - DB_MYSQLDB_PORT=3306
+      - DB_MYSQLDB_DATABASE=n8n
+      - DB_MYSQLDB_USER=n8n
+      - DB_MYSQLDB_PASSWORD=secret
+      - QUEUE_MODE=redis
+      - QUEUE_REDIS_HOST=n8n_redis
+      - QUEUE_REDIS_PORT=6380
+      - N8N_PORT=5678
+    volumes:
+      - n8n_data:/tmp/n8n_env
+    networks:
+      - n8n_net
+    depends_on:
+      - n8n_mysql
+      - n8n_redis
+      - ngrok
+      - init-ngrok
+    restart: unless-stopped
+
+
+  python-dev:
+    image: python:3.11
+    container_name: n8n_python
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./python-app:/app
+    working_dir: /app
+    command: tail -f /dev/null
+    tty: true
+    stdin_open: true
+    networks:
+      - n8n_net
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: n8n_mailpit
+    ports:
+      - "8026:8025"
+      - "1026:1025"
+    networks:
+      - n8n_net
+
+  n8n_mysql:
+    image: mysql:8.0
+    container_name: n8n_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: n8n
+      MYSQL_USER: n8n
+      MYSQL_PASSWORD: secret
+    ports:
+      - "3307:3306"
+    volumes:
+      - n8n_mysql_data:/var/lib/mysql
+    networks:
+      - n8n_net
+
+  n8n_redis:
+    image: redis:alpine
+    container_name: n8n_redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - n8n_redis_data:/data
+    networks:
+      - n8n_net
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: n8n_ngrok
+    command: http n8n_app:5678
+    environment:
+      NGROK_AUTHTOKEN:  ${NGROK_AUTHTOKEN}
+    networks:
+      - n8n_net
+    ports:
+      - "4040:4040"
+
+  init-ngrok:
+    image: curlimages/curl:latest
+    container_name: n8n_ngrok_init
+    user: "0:0"  # 👈 run as root to avoid permission denied
+    depends_on:
+      - ngrok
+    networks:
+      - n8n_net
+    volumes:
+      - n8n_data:/tmp/n8n_env
+    entrypoint:
+      - sh
+      - -c
+      - |
+        echo "[init-ngrok] Waiting for ngrok to initialize...";
+        until curl --silent http://ngrok:4040/api/tunnels | grep -q public_url; do sleep 1; done;
+        PUBLIC_URL=$(curl -s http://ngrok:4040/api/tunnels | grep -o "https://[^\"']*");
+        echo "[init-ngrok] Found public ngrok URL: $PUBLIC_URL";
+        echo "export N8N_PROTOCOL=http" > /tmp/n8n_env/env.sh
+        echo "export N8N_PORT=5678" >> /tmp/n8n_env/env.sh
+        echo "export N8N_HOST=localhost" >> /tmp/n8n_env/env.sh
+        echo "export WEBHOOK_TUNNEL_URL=$PUBLIC_URL" >> /tmp/n8n_env/env.sh
+    restart: "no"
+
+
+volumes:
+  n8n_data:
+  n8n_mysql_data:
+  n8n_redis_data:
+
+networks:
+  n8n_net:
+    driver: bridge
