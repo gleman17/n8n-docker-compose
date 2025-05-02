@@ -3,6 +3,7 @@ services:
     build:
       context: ./n8n
     container_name: n8n_app
+    user: "0:0"
     ports:
       - "5678:5678"
     environment:
@@ -19,8 +20,13 @@ services:
       - QUEUE_REDIS_HOST=n8n_redis
       - QUEUE_REDIS_PORT=6380
       - N8N_PORT=5678
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_METRICS=false
+      - N8N_ENCRYPTION_KEY=42qM1MdQN+fVwbSI1fBQb94dzp/2PFRVWhdfYggc2CU=
+      - N8N_ENABLE_EXTERNAL_MODULES=true
     volumes:
-      - n8n_data:/tmp/n8n_env
+      - n8n_data:/home/node/.n8n
+      - n8n_env:/tmp/n8n_env
     networks:
       - n8n_net
     depends_on:
@@ -29,7 +35,8 @@ services:
       - ngrok
       - init-ngrok
     restart: unless-stopped
-
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
 
   python-dev:
     image: python:3.11
@@ -84,7 +91,7 @@ services:
     container_name: n8n_ngrok
     command: http n8n_app:5678
     environment:
-      NGROK_AUTHTOKEN:  ${NGROK_AUTHTOKEN}
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
     networks:
       - n8n_net
     ports:
@@ -93,13 +100,13 @@ services:
   init-ngrok:
     image: curlimages/curl:latest
     container_name: n8n_ngrok_init
-    user: "0:0"  # 👈 run as root to avoid permission denied
+    user: "0:0"
     depends_on:
       - ngrok
     networks:
       - n8n_net
     volumes:
-      - n8n_data:/tmp/n8n_env
+      - n8n_env:/tmp/n8n_env
     entrypoint:
       - sh
       - -c
@@ -114,11 +121,30 @@ services:
         echo "export WEBHOOK_TUNNEL_URL=$PUBLIC_URL" >> /tmp/n8n_env/env.sh
     restart: "no"
 
+  puppeteer:
+    build:
+      context: ./puppeteer
+    container_name: n8n_puppeteer
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - n8n_net
+    tty: true
 
 volumes:
   n8n_data:
+    name: n8n_data
+    external: false
   n8n_mysql_data:
+    name: n8n_mysql_data
+    external: false
   n8n_redis_data:
+    name: n8n_redis_data
+    external: false
+  n8n_env:
+    name: n8n_env
+    external: false
 
 networks:
   n8n_net:
